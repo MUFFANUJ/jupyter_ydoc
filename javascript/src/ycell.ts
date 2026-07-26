@@ -165,13 +165,18 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
     this.ymodel = ymodel;
     this._ysource = ysource;
     this._ymetadata = ymetadata ?? this.ymodel.get('metadata');
-    this._prevSourceLength = this.ymodel.doc == null ? 0 : ysource.length;
+    this._prevSourceLength = ysource ? ysource.length : 0;
     this._notebook = null;
     this._awareness = null;
     this._undoManager = null;
     if (options.notebook) {
       this._notebook = options.notebook as YNotebook;
-      this._initializeUndoManager();
+      if (this._notebook.disableDocumentWideUndoRedo) {
+        this._undoManager = new Y.UndoManager([this.ymodel], {
+          trackedOrigins: new Set([this]),
+          doc: this._notebook.ydoc
+        });
+      }
     } else {
       // Standalone cell
       const doc = new Y.Doc();
@@ -300,11 +305,9 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
     if (!this.notebook) {
       return this._undoManager;
     }
-    if (this.notebook.disableDocumentWideUndoRedo) {
-      this._initializeUndoManager();
-      return this._undoManager;
-    }
-    return this.notebook.undoManager;
+    return this.notebook?.disableDocumentWideUndoRedo
+      ? this._undoManager
+      : this.notebook.undoManager;
   }
 
   readonly ymodel: Y.Map<any>;
@@ -407,9 +410,7 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
    */
   setSource(value: string): void {
     this.transact(() => {
-      if (this.ysource.doc != null) {
-        this.ysource.delete(0, this.ysource.length);
-      }
+      this.ysource.delete(0, this.ysource.length);
       this.ysource.insert(0, value);
     });
     this.dirty = true;
@@ -553,10 +554,7 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
       } else if (clone?.jupyter?.outputs_hidden != null) {
         clone.collapsed = clone.jupyter.outputs_hidden;
       }
-      if (
-        this._ymetadata.doc == null ||
-        !JSONExt.deepEqual(clone, this.getMetadata())
-      ) {
+      if (!JSONExt.deepEqual(clone, this.getMetadata())) {
         this.transact(() => {
           for (const [key, value] of Object.entries(clone)) {
             this._ymetadata.set(key, value);
@@ -587,7 +585,6 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
    * @param undoable Whether to track the change in the action history or not (default `true`)
    */
   transact(f: () => void, undoable = true, origin: any = null): void {
-    this._initializeUndoManager();
     !this.notebook || this.notebook.disableDocumentWideUndoRedo
       ? this.ymodel.doc == null
         ? f()
@@ -688,19 +685,6 @@ export class YBaseCell<Metadata extends nbformat.IBaseCellMetadata>
     }
   };
 
-  private _initializeUndoManager(): void {
-    if (
-      this._undoManager == null &&
-      this._notebook?.disableDocumentWideUndoRedo &&
-      this.ymodel.doc === this._notebook.ydoc
-    ) {
-      this._undoManager = new Y.UndoManager([this.ymodel], {
-        trackedOrigins: new Set([this]),
-        doc: this._notebook.ydoc
-      });
-    }
-  }
-
   protected _metadataChanged = new Signal<this, IMapChange>(this);
   /**
    * The notebook that this cell belongs to.
@@ -782,10 +766,7 @@ export class YCodeCell
     // cell, we need to set execution_count to `null` if we compare
     // using `this.execution_count` it will return `null` and we will
     // never initialize it
-    if (
-      this.ymodel.doc == null ||
-      this.ymodel.get('execution_count') !== count
-    ) {
+    if (this.ymodel.get('execution_count') !== count) {
       this.transact(() => {
         this.ymodel.set('execution_count', count);
       }, false);
@@ -857,9 +838,7 @@ export class YCodeCell
    */
   setOutputs(outputs: Array<nbformat.IOutput>): void {
     this.transact(() => {
-      if (this._youtputs.doc != null) {
-        this._youtputs.delete(0, this._youtputs.length);
-      }
+      this._youtputs.delete(0, this._youtputs.length);
       const newOutputs = this.createOutputs(outputs);
       this._youtputs.insert(0, newOutputs);
     }, false);
